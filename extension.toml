@@ -1,0 +1,15 @@
+id = "al"
+name = "AL"
+version = "0.0.1"
+schema_version = 1
+authors = ["Barne-B"]
+description = "AL language support for Zed"
+repository = "https://github.com/Barne-B/zed-al-language"
+
+[grammars.al]
+repository = "https://github.com/SShadowS/tree-sitter-al"
+rev = "3e4ccb672f27d1ad673a8a995b1f5c770bb0f738"
+
+[language_servers.al]
+name = "AL Language Server"
+languages = ["AL"]

@@ -1,0 +1,6 @@
+name = "AL"
+grammar = "al"
+path_suffixes = ["al"]
+line_comments = ["// "]
+tab_size = 4
+hard_tabs = false
