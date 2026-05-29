@@ -1,7 +1,0 @@
-C:\Users\bbellin\OneDrive - Aptean-online\Desktop\TRASER\Stuff\zed-al-language\target\debug\deps\wit_bindgen_rust_macro-ae43ec39e065afdf.d: C:\Users\bbellin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wit-bindgen-rust-macro-0.41.0\src\lib.rs
-
-C:\Users\bbellin\OneDrive - Aptean-online\Desktop\TRASER\Stuff\zed-al-language\target\debug\deps\wit_bindgen_rust_macro-ae43ec39e065afdf.dll: C:\Users\bbellin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wit-bindgen-rust-macro-0.41.0\src\lib.rs
-
-C:\Users\bbellin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\wit-bindgen-rust-macro-0.41.0\src\lib.rs:
-
-# env-dep:DEBUG_OUTPUT_DIR=C:\\Users\\bbellin\\OneDrive - Aptean-online\\Desktop\\TRASER\\Stuff\\zed-al-language\\target\\debug\\build\\wit-bindgen-rust-macro-91215dbd1023ee0f\\out

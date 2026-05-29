@@ -1,2 +1,0 @@
-cargo:rerun-if-changed=build.rs
-cargo:rustc-env=DEBUG_OUTPUT_DIR=C:\Users\bbellin\OneDrive - Aptean-online\Desktop\TRASER\Stuff\zed-al-language\target\debug\build\wit-bindgen-rust-macro-91215dbd1023ee0f\out
