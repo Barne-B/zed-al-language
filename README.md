@@ -7,6 +7,8 @@ This extension provides:
 - `.al` file detection.
 - Tree-sitter syntax highlighting, brackets, indentation, folding, and outline support via [`SShadowS/tree-sitter-al`](https://github.com/SShadowS/tree-sitter-al).
 - Language Server Protocol support through Microsoft ALTool's standalone LSP command.
+- Snippets for common AL objects and constructs.
+- A file-scoped slash command for finding next free AL IDs.
 
 ## Requirements
 
@@ -24,7 +26,38 @@ The language server is launched over stdio with:
 al launchlspserver "<path-to-project>" --packagecachepath "<symbols>"
 ```
 
-## Zed Settings
+## Snippets and Templates
+
+The extension contributes Zed/VS Code-style snippets from `snippets/al.json`. Type a prefix in an `.al` file and accept the completion to scaffold common Business Central constructs:
+
+- `altable`, `altableext`, `alpage`, `alpageext`, `alcodeunit`, `alreport`, and `alenum` for object templates.
+- `alprocedure` and `altrigger` for common members.
+- `altestcodeunit` and `altest` for test code.
+- `alsubscriber` and `alevent` for event subscriber and integration event patterns.
+
+## Next Free ID
+
+The extension provides an assistant slash command:
+
+```text
+/al-next-id path/to/Object.al [line]
+```
+
+It reads the `.al` file from the current worktree and reports:
+
+- The next free object ID found within that file.
+- The next free `field(...)` ID inside table and tableextension objects.
+- The next free enum `value(...)` ID inside enum and enumextension objects.
+
+When the file contains multiple objects, pass a line number inside the object you want to inspect:
+
+```text
+/al-next-id src/MyTable.al 42
+```
+
+Zed extension slash commands receive a worktree but not the active editor, current buffer, or cursor position. Because of that, `/al-next-id` cannot automatically infer the currently open object; pass the relative file path, and optionally a line number, to target the desired object. The reported object ID is file-scoped only and is not a project-wide allocation check.
+
+## IntelliSense and LSP Setup
 
 The extension uses the current Zed worktree root as the AL project path and passes `.alpackages` as the default symbol package cache:
 
@@ -32,7 +65,9 @@ The extension uses the current Zed worktree root as the AL project path and pass
 al launchlspserver "<worktree-root>" --packagecachepath "<worktree-root>/.alpackages"
 ```
 
-If your symbols live somewhere else, configure `packageCachePath`.
+Download or copy your dependency `.app` packages into `<worktree-root>/.alpackages` for the default setup. If your symbols live somewhere else, configure `packageCachePath`.
+
+When `.vscode/settings.json` exists in the worktree, the adapter automatically passes it as `--settingspath "<worktree-root>/.vscode/settings.json"`. You can still override this with `settingsPath` in Zed settings.
 
 For cross-app navigation in a workspace with multiple AL apps, pass every app folder to ALTool:
 
@@ -53,16 +88,22 @@ For cross-app navigation in a workspace with multiple AL apps, pass every app fo
 }
 ```
 
-Relative `projects` entries are resolved from the Zed worktree root. You can also use absolute paths. ALTool reads each project's `app.json` and resolves dependency relationships so go-to-definition and find-references can work across those apps.
+Relative `projects` entries are resolved from the Zed worktree root. You can also use absolute paths. ALTool reads each project's `app.json` and resolves dependency relationships so hover, completions, go-to-definition, and find-references can work across those apps.
 
-To configure the symbol package cache from Zed, add:
+Recommended Zed settings for a typical multi-app workspace:
 
 ```json
 {
   "lsp": {
     "al": {
       "settings": {
-        "packageCachePath": "C:\\path\\to\\symbols"
+        "projects": [
+          "BaseApp",
+          "MyDependencyApp",
+          "MyMainApp"
+        ],
+        "packageCachePath": ".alpackages",
+        "logLevel": "Warning"
       }
     }
   }
@@ -76,6 +117,7 @@ The adapter also accepts these optional settings:
 - `logFile`: passed as `--logfile`.
 - `logLevel`: passed as `--loglevel`.
 - `projects` or `projectPaths`: AL project folders passed as positional `launchlspserver` project arguments.
+- `packageCachePath` or `packageCachePaths`: symbol package cache path or paths passed as `--packagecachepath`.
 
 You can override the executable or full argument list with Zed's standard LSP binary settings:
 
@@ -99,6 +141,30 @@ You can override the executable or full argument list with Zed's standard LSP bi
 
 When `binary.arguments` is set, it replaces the default generated arguments.
 
+Semantic tokens are provided by ALTool when supported by the active language server. This extension does not add custom semantic token remapping, so highlighting remains driven by Tree-sitter plus the LSP capabilities reported by ALTool.
+
+### Completion Deserialization Errors
+
+If Zed logs an error like `failed to deserialize response from language server: invalid type: map, expected a string` for a completion response containing `"label":{"label":"..."}`, the AL language server is returning a VS Code-style completion label object in the LSP `CompletionItem.label` field. Standard LSP requires `CompletionItem.label` to be a string; structured label metadata belongs in `CompletionItem.labelDetails`.
+
+This is not caused by `snippets/al.json`, and it cannot be corrected by this extension's `label_for_completion` hook because Zed only calls that hook after completion items have already deserialized successfully. The current `zed_extension_api` lets this extension provide the language server command, initialization options, and workspace configuration, but it does not expose a hook to rewrite raw LSP responses or override Zed's LSP client capabilities.
+
+As an opt-in workaround, the extension can launch ALTool through a small stdio proxy that rewrites completion responses before Zed deserializes them. The proxy preserves the normal ALTool arguments and only changes completion items whose `label` is an object, replacing it with `label.label` when present and falling back to `filterText`, `insertText`, or `detail`.
+
+```json
+{
+  "lsp": {
+    "al": {
+      "settings": {
+        "useCompletionProxy": true
+      }
+    }
+  }
+}
+```
+
+The proxy uses Zed's Node runtime (`node_binary_path`, including Volta-managed installs on Windows) and launches `scripts/al-lsp-proxy.js` by absolute path from the extension working directory (`PWD`). The script ships in this repository next to `extension.wasm`; it is not embedded with `node -e` or `AL_LSP_PROXY_SCRIPT`. Optional `lsp.al.binary.env` entries are still forwarded when set, but the proxy does not depend on custom env vars reaching the LSP process. It is still a workaround: it only covers malformed completion responses, adds one local process between Zed and ALTool, and should be removed once ALTool or Zed handles the invalid response shape directly. If the proxy causes trouble, remove `useCompletionProxy` to return to the normal LSP path.
+
 ## Development
 
 Install this folder as a Zed dev extension:
@@ -110,3 +176,9 @@ Install this folder as a Zed dev extension:
 For local validation, open an AL project containing `app.json`, at least one `.al` file, and the required `.app` symbol packages. Then verify syntax highlighting and LSP features such as hover, completions, go-to-definition, diagnostics, formatting, and rename.
 
 If the language server does not start, check Zed's log for missing `al`/`altool`, invalid package cache paths, or missing symbol packages.
+
+To smoke test the optional completion proxy without ALTool, run:
+
+```sh
+node scripts/test-al-lsp-proxy.js
+```

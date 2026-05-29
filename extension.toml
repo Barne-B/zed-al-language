@@ -5,6 +5,7 @@ schema_version = 1
 authors = ["Barne-B"]
 description = "AL language support for Zed"
 repository = "https://github.com/Barne-B/zed-al-language"
+snippets = "snippets/al.json"
 
 [grammars.al]
 repository = "https://github.com/SShadowS/tree-sitter-al"
@@ -13,3 +14,7 @@ rev = "3e4ccb672f27d1ad673a8a995b1f5c770bb0f738"
 [language_servers.al]
 name = "AL Language Server"
 languages = ["AL"]
+
+[slash_commands.al-next-id]
+description = "finds the next free AL ID in a file or object"
+requires_argument = true

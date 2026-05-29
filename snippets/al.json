@@ -1,0 +1,230 @@
+{
+  "AL table object": {
+    "prefix": "altable",
+    "body": [
+      "table ${1:50100} \"${2:My Table}\"",
+      "{",
+      "    Caption = '${2:My Table}';",
+      "    DataClassification = ${3:CustomerContent};",
+      "",
+      "    fields",
+      "    {",
+      "        field(1; \"No.\"; Code[20])",
+      "        {",
+      "            Caption = 'No.';",
+      "        }",
+      "        field(2; Description; Text[100])",
+      "        {",
+      "            Caption = 'Description';",
+      "        }",
+      "    }",
+      "",
+      "    keys",
+      "    {",
+      "        key(PK; \"No.\")",
+      "        {",
+      "            Clustered = true;",
+      "        }",
+      "    }",
+      "$0",
+      "}"
+    ],
+    "description": "Create a basic AL table object"
+  },
+  "AL tableextension object": {
+    "prefix": "altableext",
+    "body": [
+      "tableextension ${1:50100} \"${2:My Table Extension}\" extends \"${3:Customer}\"",
+      "{",
+      "    fields",
+      "    {",
+      "        field(${4:50100}; \"${5:My Field}\"; ${6:Text[100]})",
+      "        {",
+      "            Caption = '${5:My Field}';",
+      "            DataClassification = ${7:CustomerContent};",
+      "        }",
+      "    }",
+      "$0",
+      "}"
+    ],
+    "description": "Create a tableextension with one field"
+  },
+  "AL page object": {
+    "prefix": "alpage",
+    "body": [
+      "page ${1:50100} \"${2:My Page}\"",
+      "{",
+      "    ApplicationArea = All;",
+      "    Caption = '${2:My Page}';",
+      "    PageType = ${3:List};",
+      "    SourceTable = \"${4:My Table}\";",
+      "    UsageCategory = ${5:Lists};",
+      "",
+      "    layout",
+      "    {",
+      "        area(Content)",
+      "        {",
+      "            repeater(General)",
+      "            {",
+      "                field(\"No.\"; Rec.\"No.\")",
+      "                {",
+      "                    ToolTip = 'Specifies the value of the No. field.';",
+      "                }",
+      "                field(Description; Rec.Description)",
+      "                {",
+      "                    ToolTip = 'Specifies the value of the Description field.';",
+      "                }",
+      "            }",
+      "        }",
+      "    }",
+      "$0",
+      "}"
+    ],
+    "description": "Create a basic AL page object"
+  },
+  "AL pageextension object": {
+    "prefix": "alpageext",
+    "body": [
+      "pageextension ${1:50100} \"${2:My Page Extension}\" extends \"${3:Customer Card}\"",
+      "{",
+      "    layout",
+      "    {",
+      "        addlast(Content)",
+      "        {",
+      "            field(\"${4:My Field}\"; Rec.\"${4:My Field}\")",
+      "            {",
+      "                ApplicationArea = All;",
+      "                ToolTip = 'Specifies the value of the ${4:My Field} field.';",
+      "            }",
+      "        }",
+      "    }",
+      "$0",
+      "}"
+    ],
+    "description": "Create a pageextension with one field"
+  },
+  "AL codeunit object": {
+    "prefix": "alcodeunit",
+    "body": [
+      "codeunit ${1:50100} \"${2:My Codeunit}\"",
+      "{",
+      "    procedure ${3:Run}()",
+      "    begin",
+      "        $0",
+      "    end;",
+      "}"
+    ],
+    "description": "Create a basic AL codeunit object"
+  },
+  "AL report object": {
+    "prefix": "alreport",
+    "body": [
+      "report ${1:50100} \"${2:My Report}\"",
+      "{",
+      "    ApplicationArea = All;",
+      "    Caption = '${2:My Report}';",
+      "    UsageCategory = ReportsAndAnalysis;",
+      "",
+      "    dataset",
+      "    {",
+      "        dataitem(${3:DataItem}; \"${4:Customer}\")",
+      "        {",
+      "            column(${5:No}; \"No.\")",
+      "            {",
+      "            }",
+      "        }",
+      "    }",
+      "$0",
+      "}"
+    ],
+    "description": "Create a basic AL report object"
+  },
+  "AL enum object": {
+    "prefix": "alenum",
+    "body": [
+      "enum ${1:50100} \"${2:My Enum}\"",
+      "{",
+      "    Extensible = true;",
+      "",
+      "    value(0; ${3:Blank})",
+      "    {",
+      "        Caption = '${3:Blank}';",
+      "    }",
+      "    value(1; ${4:Value})",
+      "    {",
+      "        Caption = '${4:Value}';",
+      "    }",
+      "$0",
+      "}"
+    ],
+    "description": "Create a basic AL enum object"
+  },
+  "AL procedure": {
+    "prefix": "alprocedure",
+    "body": [
+      "${1:local }procedure ${2:MyProcedure}(${3:})${4:: Boolean}",
+      "begin",
+      "    $0",
+      "end;"
+    ],
+    "description": "Create an AL procedure"
+  },
+  "AL trigger": {
+    "prefix": "altrigger",
+    "body": [
+      "trigger ${1:OnAfterGetRecord}()",
+      "begin",
+      "    $0",
+      "end;"
+    ],
+    "description": "Create an AL trigger"
+  },
+  "AL test codeunit": {
+    "prefix": "altestcodeunit",
+    "body": [
+      "codeunit ${1:50100} \"${2:My Tests}\"",
+      "{",
+      "    Subtype = Test;",
+      "",
+      "    [Test]",
+      "    procedure ${3:MyTest}()",
+      "    begin",
+      "        $0",
+      "    end;",
+      "}"
+    ],
+    "description": "Create an AL test codeunit"
+  },
+  "AL test procedure": {
+    "prefix": "altest",
+    "body": [
+      "[Test]",
+      "procedure ${1:MyTest}()",
+      "begin",
+      "    $0",
+      "end;"
+    ],
+    "description": "Create an AL test procedure"
+  },
+  "AL event subscriber": {
+    "prefix": "alsubscriber",
+    "body": [
+      "[EventSubscriber(ObjectType::${1:Codeunit}, ${1:Codeunit}::\"${2:Publisher}\", '${3:OnAfterEvent}', '', false, false)]",
+      "local procedure ${4:OnAfterEvent}(${5:})",
+      "begin",
+      "    $0",
+      "end;"
+    ],
+    "description": "Create an AL event subscriber procedure"
+  },
+  "AL integration event": {
+    "prefix": "alevent",
+    "body": [
+      "[IntegrationEvent(false, false)]",
+      "local procedure ${1:OnBeforeSomething}(${2:})",
+      "begin",
+      "end;"
+    ],
+    "description": "Create an AL integration event publisher"
+  }
+}

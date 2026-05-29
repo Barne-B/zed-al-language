@@ -5,8 +5,17 @@ const LANGUAGE_SERVER_ID: &str = "al";
 const DEFAULT_BINARY_NAME: &str = "al";
 const FALLBACK_BINARY_NAME: &str = "altool";
 const DEFAULT_PACKAGE_CACHE_PATH: &str = ".alpackages";
+const DEFAULT_SETTINGS_PATH: &str = ".vscode/settings.json";
+const NEXT_ID_COMMAND: &str = "al-next-id";
+const COMPLETION_PROXY_SCRIPT_REL: &str = "scripts/al-lsp-proxy.js";
+const COMPLETION_PROXY_SCRIPT_NAME: &str = "al-lsp-proxy.js";
+const EMBEDDED_COMPLETION_PROXY_SCRIPT: &str = include_str!("../scripts/al-lsp-proxy.js");
 
-struct AlExtension;
+struct AlExtension {
+    /// Zed sets `PWD` to the extension working directory for WASM extensions.
+    extension_work_dir: String,
+    completion_proxy_script_path: Option<String>,
+}
 
 impl AlExtension {
     fn language_server_settings(worktree: &zed::Worktree) -> zed::Result<LspSettings> {
@@ -70,6 +79,9 @@ impl AlExtension {
         if let Some(settings_path) = setting_string(settings, &["settingsPath", "settings_path"]) {
             args.push("--settingspath".to_string());
             args.push(settings_path);
+        } else if worktree.read_text_file(DEFAULT_SETTINGS_PATH).is_ok() {
+            args.push("--settingspath".to_string());
+            args.push(resolve_worktree_path(worktree, DEFAULT_SETTINGS_PATH));
         }
 
         if let Some(workspace_file) = setting_string(settings, &["workspaceFile", "workspace_file"])
@@ -107,11 +119,66 @@ impl AlExtension {
 
         env
     }
+
+    fn completion_proxy_script_path(&mut self) -> zed::Result<String> {
+        if let Some(path) = &self.completion_proxy_script_path {
+            return Ok(path.clone());
+        }
+
+        let path = Self::resolve_completion_proxy_script_path(&self.extension_work_dir)?;
+        self.completion_proxy_script_path = Some(path.clone());
+        Ok(path)
+    }
+
+    fn resolve_completion_proxy_script_path(extension_work_dir: &str) -> zed::Result<String> {
+        let extension_work_dir = extension_work_dir.trim();
+
+        if extension_work_dir.is_empty() {
+            return Err(
+                "Could not resolve the AL completion proxy script path (extension work directory is unavailable). Reinstall with `zed: install dev extension`.".to_string(),
+            );
+        }
+
+        let dev_script_path = join_paths(extension_work_dir, COMPLETION_PROXY_SCRIPT_REL);
+        if path_is_regular_file(&dev_script_path) {
+            return Ok(dev_script_path);
+        }
+
+        let materialized_path = join_paths(extension_work_dir, COMPLETION_PROXY_SCRIPT_NAME);
+        materialize_completion_proxy_script(&materialized_path)?;
+
+        Ok(materialized_path)
+    }
+}
+
+fn path_is_regular_file(path: &str) -> bool {
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
+}
+
+fn materialize_completion_proxy_script(path: &str) -> zed::Result<()> {
+    if path_is_regular_file(path) {
+        let existing = std::fs::read_to_string(path).map_err(|error| {
+            format!("could not read AL completion proxy script at `{path}`: {error}")
+        })?;
+
+        if existing == EMBEDDED_COMPLETION_PROXY_SCRIPT {
+            return Ok(());
+        }
+    }
+
+    std::fs::write(path, EMBEDDED_COMPLETION_PROXY_SCRIPT).map_err(|error| {
+        format!("could not materialize AL completion proxy script at `{path}`: {error}")
+    })
 }
 
 impl zed::Extension for AlExtension {
     fn new() -> Self {
-        Self
+        Self {
+            extension_work_dir: std::env::var("PWD").unwrap_or_default(),
+            completion_proxy_script_path: None,
+        }
     }
 
     fn language_server_command(
@@ -126,11 +193,27 @@ impl zed::Extension for AlExtension {
         }
 
         let settings = Self::language_server_settings(worktree)?;
-        let command = Self::resolve_command(&settings, worktree)?;
+        let server_command = Self::resolve_command(&settings, worktree)?;
         let args = Self::resolve_args(&settings, worktree);
         let env = Self::resolve_env(&settings, worktree);
 
-        Ok(zed::Command { command, args, env })
+        if setting_bool(&settings, &["useCompletionProxy", "use_completion_proxy"]) {
+            let proxy_script_path = self.completion_proxy_script_path()?;
+            let mut proxy_args = vec![proxy_script_path, "--".to_string(), server_command];
+            proxy_args.extend(args);
+
+            return Ok(zed::Command {
+                command: zed::node_binary_path()?,
+                args: proxy_args,
+                env,
+            });
+        }
+
+        Ok(zed::Command {
+            command: server_command,
+            args,
+            env,
+        })
     }
 
     fn language_server_initialization_options(
@@ -144,6 +227,378 @@ impl zed::Extension for AlExtension {
 
         Self::language_server_settings(worktree).map(|settings| settings.initialization_options)
     }
+
+    fn run_slash_command(
+        &self,
+        command: zed::SlashCommand,
+        args: Vec<String>,
+        worktree: Option<&zed::Worktree>,
+    ) -> zed::Result<zed::SlashCommandOutput> {
+        if command.name.as_str() != NEXT_ID_COMMAND {
+            return Err(format!("unknown slash command `{}`", command.name));
+        }
+
+        let worktree = worktree.ok_or_else(|| {
+            format!("`/{NEXT_ID_COMMAND}` requires a worktree. Usage: /{NEXT_ID_COMMAND} path/to/file.al [line]")
+        })?;
+        let (path, line) = parse_next_id_args(&args)?;
+        let source = worktree
+            .read_text_file(&path)
+            .map_err(|error| format!("could not read `{path}` from the worktree: {error}"))?;
+        let objects = parse_al_objects(&source);
+
+        Ok(zed::SlashCommandOutput {
+            text: format_next_id_output(&path, line, &objects),
+            sections: Vec::new(),
+        })
+    }
+}
+
+#[derive(Debug)]
+struct AlObject {
+    kind: String,
+    id: u32,
+    name: String,
+    start_line: usize,
+    end_line: usize,
+    field_ids: Vec<u32>,
+    enum_value_ids: Vec<u32>,
+}
+
+struct AlObjectDraft {
+    object: AlObject,
+    brace_depth: i32,
+    saw_body: bool,
+}
+
+fn parse_next_id_args(args: &[String]) -> zed::Result<(String, Option<usize>)> {
+    let input = args.join(" ");
+    let input = input.trim();
+
+    if input.is_empty() {
+        return Err(format!("usage: /{NEXT_ID_COMMAND} path/to/file.al [line]"));
+    }
+
+    let (path, line) = if let Some((path, line)) = split_path_line(input) {
+        (path, Some(line))
+    } else {
+        let mut parts = input.rsplitn(2, char::is_whitespace);
+        let last = parts.next().unwrap_or_default();
+
+        if let Ok(line) = last.parse::<usize>() {
+            let path = parts.next().unwrap_or_default().trim();
+
+            if path.is_empty() {
+                (input, None)
+            } else {
+                (path, Some(line))
+            }
+        } else {
+            (input, None)
+        }
+    };
+
+    let path = path.trim().trim_matches('"').trim_matches('\'');
+
+    if path.is_empty() {
+        Err(format!("usage: /{NEXT_ID_COMMAND} path/to/file.al [line]"))
+    } else {
+        Ok((path.to_string(), line))
+    }
+}
+
+fn split_path_line(input: &str) -> Option<(&str, usize)> {
+    let (path, line) = input.rsplit_once(':')?;
+
+    if path.len() == 1 && path.as_bytes()[0].is_ascii_alphabetic() {
+        return None;
+    }
+
+    if line.is_empty() || !line.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    Some((path, line.parse().ok()?))
+}
+
+fn parse_al_objects(source: &str) -> Vec<AlObject> {
+    let mut objects = Vec::new();
+    let mut current: Option<AlObjectDraft> = None;
+
+    for (line_index, line) in source.lines().enumerate() {
+        let line_number = line_index + 1;
+
+        if let Some(draft) = current.as_mut() {
+            collect_member_ids(&mut draft.object, line);
+
+            let delta = brace_delta(line);
+            draft.brace_depth += delta;
+            draft.saw_body |= line.contains('{');
+
+            if draft.saw_body && draft.brace_depth <= 0 {
+                let mut draft = current.take().expect("current object draft");
+                draft.object.end_line = line_number;
+                objects.push(draft.object);
+            }
+
+            continue;
+        }
+
+        let Some((kind, id, name)) = parse_object_declaration(line) else {
+            continue;
+        };
+
+        let mut object = AlObject {
+            kind,
+            id,
+            name,
+            start_line: line_number,
+            end_line: line_number,
+            field_ids: Vec::new(),
+            enum_value_ids: Vec::new(),
+        };
+        collect_member_ids(&mut object, line);
+
+        let brace_depth = brace_delta(line);
+        let saw_body = line.contains('{');
+
+        if saw_body && brace_depth <= 0 {
+            objects.push(object);
+        } else {
+            current = Some(AlObjectDraft {
+                object,
+                brace_depth,
+                saw_body,
+            });
+        }
+    }
+
+    if let Some(mut draft) = current {
+        draft.object.end_line = source.lines().count();
+        objects.push(draft.object);
+    }
+
+    objects
+}
+
+fn parse_object_declaration(line: &str) -> Option<(String, u32, String)> {
+    const OBJECT_KINDS: &[&str] = &[
+        "tableextension",
+        "pageextension",
+        "reportextension",
+        "enumextension",
+        "permissionsetextension",
+        "profileextension",
+        "pagecustomization",
+        "permissionset",
+        "controladdin",
+        "entitlement",
+        "codeunit",
+        "interface",
+        "profile",
+        "xmlport",
+        "report",
+        "query",
+        "table",
+        "page",
+        "enum",
+    ];
+
+    let trimmed = line.trim_start();
+    let lower = trimmed.to_ascii_lowercase();
+
+    for kind in OBJECT_KINDS {
+        if !lower.starts_with(kind) {
+            continue;
+        }
+
+        if !trimmed
+            .as_bytes()
+            .get(kind.len())
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            continue;
+        }
+
+        let rest = trimmed[kind.len()..].trim_start();
+        let (id, rest) = parse_leading_number(rest)?;
+        let name = parse_object_name(rest);
+
+        return Some(((*kind).to_string(), id, name));
+    }
+
+    None
+}
+
+fn parse_object_name(rest: &str) -> String {
+    let rest = rest.trim_start();
+
+    if let Some(rest) = rest.strip_prefix('"') {
+        if let Some(end_quote) = rest.find('"') {
+            return rest[..end_quote].to_string();
+        }
+    }
+
+    rest.split(|character: char| character.is_whitespace() || character == '{')
+        .next()
+        .unwrap_or_default()
+        .trim_matches('"')
+        .to_string()
+}
+
+fn parse_leading_number(input: &str) -> Option<(u32, &str)> {
+    let end = input
+        .bytes()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+
+    if end == 0 {
+        return None;
+    }
+
+    Some((input[..end].parse().ok()?, &input[end..]))
+}
+
+fn collect_member_ids(object: &mut AlObject, line: &str) {
+    if let Some(id) = parse_member_id(line, "field") {
+        object.field_ids.push(id);
+    }
+
+    if let Some(id) = parse_member_id(line, "value") {
+        object.enum_value_ids.push(id);
+    }
+}
+
+fn parse_member_id(line: &str, keyword: &str) -> Option<u32> {
+    let trimmed = line.trim_start();
+    let lower = trimmed.to_ascii_lowercase();
+
+    if !lower.starts_with(keyword) {
+        return None;
+    }
+
+    let rest = trimmed[keyword.len()..].trim_start();
+    let rest = rest.strip_prefix('(')?.trim_start();
+
+    parse_leading_number(rest).map(|(id, _)| id)
+}
+
+fn brace_delta(line: &str) -> i32 {
+    line.chars().fold(0, |depth, character| match character {
+        '{' => depth + 1,
+        '}' => depth - 1,
+        _ => depth,
+    })
+}
+
+fn format_next_id_output(path: &str, line: Option<usize>, objects: &[AlObject]) -> String {
+    if objects.is_empty() {
+        return format!("No AL object declarations were found in `{path}`.");
+    }
+
+    let selected_objects: Vec<&AlObject> = if let Some(line) = line {
+        objects
+            .iter()
+            .filter(|object| object.start_line <= line && line <= object.end_line)
+            .collect()
+    } else if objects.len() == 1 {
+        objects.iter().collect()
+    } else {
+        objects.iter().collect()
+    };
+
+    if selected_objects.is_empty() {
+        return format!(
+            "No AL object in `{path}` contains line {}.",
+            line.unwrap_or_default()
+        );
+    }
+
+    let mut output = String::new();
+
+    if let Some(line) = line {
+        output.push_str(&format!("Next free AL IDs in `{path}` at line {line}:\n"));
+    } else {
+        output.push_str(&format!("Next free AL IDs in `{path}`:\n"));
+
+        if objects.len() > 1 {
+            output.push_str(&format!(
+                "Pass a line number, for example `/{NEXT_ID_COMMAND} {path} <line>`, to target one object.\n"
+            ));
+        }
+    }
+
+    let next_object_id = next_free_id(
+        &objects.iter().map(|object| object.id).collect::<Vec<_>>(),
+        1,
+    );
+
+    for object in selected_objects {
+        output.push_str(&format!(
+            "- {} {} \"{}\" (lines {}-{}):",
+            object.kind, object.id, object.name, object.start_line, object.end_line
+        ));
+
+        let mut parts = Vec::new();
+
+        if !object.field_ids.is_empty() {
+            parts.push(format!(
+                "next field ID {}",
+                next_free_id(&object.field_ids, 1)
+            ));
+        }
+
+        if !object.enum_value_ids.is_empty() {
+            parts.push(format!(
+                "next enum value ID {}",
+                next_free_id(&object.enum_value_ids, 0)
+            ));
+        }
+
+        if parts.is_empty() {
+            parts.push("no field or enum value IDs found".to_string());
+        }
+
+        output.push(' ');
+        output.push_str(&parts.join(", "));
+        output.push('\n');
+    }
+
+    output.push_str(&format!(
+        "\nNext object ID in this file: {next_object_id} (file-scoped only, not project-wide)."
+    ));
+
+    output
+}
+
+fn next_free_id(ids: &[u32], default_start: u32) -> u32 {
+    if ids.is_empty() {
+        return default_start;
+    }
+
+    let mut sorted_ids = ids.to_vec();
+    sorted_ids.sort_unstable();
+    sorted_ids.dedup();
+
+    let mut candidate = if sorted_ids.first().is_some_and(|id| *id >= 50_000) {
+        sorted_ids[0]
+    } else {
+        default_start
+    };
+
+    for id in sorted_ids {
+        if id < candidate {
+            continue;
+        }
+
+        if id == candidate {
+            candidate += 1;
+        } else {
+            break;
+        }
+    }
+
+    candidate
 }
 
 fn setting_string(settings: &LspSettings, keys: &[&str]) -> Option<String> {
@@ -158,6 +613,19 @@ fn setting_string(settings: &LspSettings, keys: &[&str]) -> Option<String> {
     }
 
     None
+}
+
+fn setting_bool(settings: &LspSettings, keys: &[&str]) -> bool {
+    let Some(settings) = settings.settings.as_ref() else {
+        return false;
+    };
+
+    keys.iter().any(|key| {
+        settings
+            .get(*key)
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    })
 }
 
 fn setting_strings(settings: &LspSettings, keys: &[&str]) -> Vec<String> {
@@ -218,12 +686,82 @@ fn is_absolute_path(path: &str) -> bool {
 }
 
 fn join_paths(root: &str, path: &str) -> String {
+    let separator = if root.contains('\\') { "\\" } else { "/" };
+    let normalized_path = path.replace(['/', '\\'], separator);
+
     if root.ends_with('/') || root.ends_with('\\') {
-        format!("{root}{path}")
-    } else if root.contains('\\') {
-        format!("{root}\\{path}")
+        format!("{root}{normalized_path}")
     } else {
-        format!("{root}/{path}")
+        format!("{root}{separator}{normalized_path}")
+    }
+}
+
+#[cfg(test)]
+mod completion_proxy_tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_work_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("zed-al-language-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("temp work dir should be created");
+        dir
+    }
+
+    #[test]
+    fn prefers_dev_scripts_path_when_present() {
+        let work_dir = temp_work_dir("dev-script");
+        let scripts_dir = work_dir.join("scripts");
+        fs::create_dir_all(&scripts_dir).expect("scripts dir should be created");
+        let dev_script = scripts_dir.join("al-lsp-proxy.js");
+        fs::write(&dev_script, "dev proxy script").expect("dev script should be written");
+
+        let resolved = AlExtension::resolve_completion_proxy_script_path(
+            &work_dir.to_string_lossy(),
+        )
+        .expect("dev script path should resolve");
+
+        assert_eq!(resolved, dev_script.to_string_lossy());
+    }
+
+    #[test]
+    fn materializes_proxy_script_in_fake_work_dir() {
+        let work_dir = temp_work_dir("materialize");
+        let expected_path = work_dir.join(COMPLETION_PROXY_SCRIPT_NAME);
+
+        let resolved = AlExtension::resolve_completion_proxy_script_path(
+            &work_dir.to_string_lossy(),
+        )
+        .expect("materialized script path should resolve");
+
+        assert_eq!(resolved, expected_path.to_string_lossy());
+        assert!(expected_path.is_file());
+
+        let materialized = fs::read_to_string(&expected_path).expect("materialized script should be readable");
+        assert_eq!(materialized, EMBEDDED_COMPLETION_PROXY_SCRIPT);
+    }
+
+    #[test]
+    fn skips_rewriting_materialized_script_when_unchanged() {
+        let work_dir = temp_work_dir("unchanged");
+        let script_path = work_dir.join(COMPLETION_PROXY_SCRIPT_NAME);
+        fs::write(&script_path, EMBEDDED_COMPLETION_PROXY_SCRIPT)
+            .expect("existing materialized script should be written");
+        let modified = fs::metadata(&script_path)
+            .expect("script metadata should exist")
+            .modified()
+            .expect("modified time should exist");
+
+        materialize_completion_proxy_script(&script_path.to_string_lossy())
+            .expect("unchanged script should not be rewritten");
+
+        assert_eq!(
+            fs::metadata(&script_path)
+                .expect("script metadata should still exist")
+                .modified()
+                .expect("modified time should still exist"),
+            modified
+        );
     }
 }
 
