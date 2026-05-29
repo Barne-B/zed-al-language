@@ -1,0 +1,10 @@
+/target/
+
+# Zed extension grammar builds
+/grammars/
+
+# Local editor and OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.zed/
